@@ -22,6 +22,9 @@ import { RateLimitGuard } from '../../common/guards/rate-limit.guard';
 import { RateLimit } from '../../common/decorators/rate-limit.decorator';
 import { AuthGuard } from '@nestjs/passport';
 import { BatchTaskDto } from './dto/batch-task.dto';
+import { PaginatedResponse, PaginationOptions } from 'src/types/pagination.interface';
+import { HttpResponse } from 'src/types/http-response.interface';
+import { Task } from './entities/task.entity';
 
 @ApiTags('tasks')
 @Controller('tasks')
@@ -33,8 +36,19 @@ export class TasksController {
 
   @Post()
   @ApiOperation({ summary: 'Create a new task' })
-  async create(@Body() createTaskDto: CreateTaskDto) {
-    return this.tasksService.create(createTaskDto);
+  async create(@Body() createTaskDto: CreateTaskDto): Promise<HttpResponse<Task>> {
+    try {
+      const result = await this.tasksService.createTask(createTaskDto);
+      return result; 
+    } catch (error) {
+      throw new HttpException(
+        {
+          success: false,
+          error: 'Failed to create task',
+        },
+        HttpStatus.BAD_REQUEST,
+      );
+    }
   }
 
   @Get()
@@ -43,35 +57,54 @@ export class TasksController {
   @ApiQuery({ name: 'priority', required: false, enum: TaskPriority })
   @ApiQuery({ name: 'page', required: false, type: Number })
   @ApiQuery({ name: 'limit', required: false, type: Number })
+  @ApiQuery({ name: 'sortBy', required: false, type: String })
+  @ApiQuery({ name: 'sortOrder', required: false, enum: ['ASC', 'DESC'] })
   async findAll(
-    @Query('status') status?: TaskStatus,
-    @Query('priority') priority?: TaskPriority,
-    @Query('page') page = 1,
-    @Query('limit') limit = 10,
-  ) {
-    //  Adjusted to match refactored service return { data, total }
-    const { data, total } = await this.tasksService.findAll({ status, priority, page, limit });
-
-    return {
-      data,
-      total,
-      page,
-      limit,
-      totalPages: Math.ceil(total / limit),
-    };
+    @Query() query: PaginationOptions & { status?: TaskStatus; priority?: TaskPriority }
+  ): Promise<HttpResponse<PaginatedResponse<Task>>> {
+    try {
+      return await this.tasksService.findAll(query); 
+    } catch (error) {
+      throw new HttpException(
+        {
+          success: false,
+          error: 'An error occurred while retrieving tasks.',
+        },
+        HttpStatus.BAD_REQUEST,
+      );
+    }
   }
 
   @Get('stats')
   @ApiOperation({ summary: 'Get task statistics' })
-  async getStats() {
-    return this.tasksService.getStatistics();
+  async getStats(): Promise<HttpResponse<any>> {
+    try {
+      return await this.tasksService.getStatistics();
+    } catch (error) {
+      throw new HttpException(
+        {
+          success: false,
+          error: 'An error occurred while retrieving task statistics.',
+        },
+        HttpStatus.BAD_REQUEST,
+      );
+    }
   }
 
   @Get(':id')
   @ApiOperation({ summary: 'Find a task by ID' })
-  async findOne(@Param('id', ParseUUIDPipe) id: string) {
-    // Added UUID pipe for validation
-    return this.tasksService.findOne(id);
+  async findOne(@Param('id', ParseUUIDPipe) id: string): Promise<HttpResponse<Task>> {
+    try {
+      return await this.tasksService.findOne(id);  
+    } catch (error) {
+      throw new HttpException(
+        {
+          success: false,
+          error: 'Task not found',
+        },
+        HttpStatus.NOT_FOUND,
+      );
+    }
   }
 
   @Patch(':id')
@@ -79,24 +112,56 @@ export class TasksController {
   async update(
     @Param('id', ParseUUIDPipe) id: string,
     @Body() updateTaskDto: UpdateTaskDto,
-  ) {
-    return this.tasksService.update(id, updateTaskDto);
+  ): Promise<HttpResponse<Task>> {
+    try {
+      return await this.tasksService.update(id, updateTaskDto); 
+      throw new HttpException(
+        {
+          success: false,
+          error: 'Failed to update task',
+        },
+        HttpStatus.BAD_REQUEST,
+      );
+    }catch (error) {
+      throw new HttpException(
+        {
+          success: false,
+          error: 'Failed to update task',
+        },
+        HttpStatus.BAD_REQUEST,
+      );
+    }
   }
 
   @Delete(':id')
-  @ApiOperation({ summary: 'Delete a task' })
-  async remove(@Param('id', ParseUUIDPipe) id: string) {
-    await this.tasksService.remove(id);
-    return { message: 'Task deleted successfully' };
+  @ApiOperation({ summary: 'Delete a task by ID' })
+  async remove(@Param('id', ParseUUIDPipe) id: string): Promise<HttpResponse<void>> {
+    try {
+      return await this.tasksService.remove(id);  
+    } catch (error) {
+      throw new HttpException(
+        {
+          success: false,
+          error: 'An error occurred while deleting the task.',
+        },
+        HttpStatus.BAD_REQUEST,
+      );
+    }
   }
 
   @Post('batch')
   @ApiOperation({ summary: 'Batch process multiple tasks' })
-  async batchProcess(@Body() batchTaskDto: BatchTaskDto) {
-    const { tasks, action } = batchTaskDto;
-    return this.tasksService.batchProcess(tasks, action);
+  async batchProcess(@Body() batchTaskDto: BatchTaskDto): Promise<HttpResponse<any>> {
+    try {
+      return await this.tasksService.batchProcess(batchTaskDto.tasks, batchTaskDto.action);  
+    } catch (error) {
+      throw new HttpException(
+        {
+          success: false,
+          error: 'Batch operation failed.',
+        },
+        HttpStatus.BAD_REQUEST,
+      );
+    }
   }
-  
-  
-  
 }

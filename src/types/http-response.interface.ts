@@ -4,3 +4,9 @@ export interface HttpResponse<T> {
   message?: string;
   error?: string;
 } 
+
+export interface BatchOperationResult {
+  successCount: number;
+  failedCount: number;
+  failedIds: string[];
+}
