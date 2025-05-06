@@ -9,7 +9,15 @@ import { TasksModule } from './modules/tasks/tasks.module';
 import { AuthModule } from './modules/auth/auth.module';
 import { TaskProcessorModule } from './queues/task-processor/task-processor.module';
 import { ScheduledTasksModule } from './queues/scheduled-tasks/scheduled-tasks.module';
-import { CacheService } from './common/services/cache.service';
+import { CacheService } from '@common/services/cache.service';
+import { CACHE_MANAGER, CacheModule } from '@nestjs/cache-manager';
+import KeyvRedis, { Keyv } from '@keyv/redis';
+import { APP_GUARD, APP_INTERCEPTOR } from '@nestjs/core';
+import { LoggingInterceptor } from '@common/interceptors/logging.interceptor';
+import { RolesGuard } from '@common/guards/roles.guard';
+
+
+
 
 @Module({
   imports: [
@@ -72,14 +80,13 @@ import { CacheService } from './common/services/cache.service';
     ScheduledTasksModule,
   ],
   providers: [
-    // Inefficient: Global cache service with no configuration options
-    // This creates a single in-memory cache instance shared across all modules
-    CacheService
+    {
+      provide: APP_INTERCEPTOR,
+      useClass: LoggingInterceptor,
+    },
+    
   ],
   exports: [
-    // Exporting the cache service makes it available to other modules
-    // but creates tight coupling
-    CacheService
   ]
 })
 export class AppModule {} 

@@ -2,10 +2,12 @@ import { NestFactory } from '@nestjs/core';
 import { AppModule } from './app.module';
 import { ValidationPipe } from '@nestjs/common';
 import { DocumentBuilder, SwaggerModule } from '@nestjs/swagger';
+import { RateLimitGuard } from '@common/guards/rate-limit.guard';
+import { HttpExceptionFilter } from '@common/filters/http-exception.filter';
 
 async function bootstrap() {
   const app = await NestFactory.create(AppModule);
-  
+  app.useGlobalGuards(app.get(RateLimitGuard));
   // Global validation pipe
   app.useGlobalPipes(
     new ValidationPipe({
@@ -18,6 +20,9 @@ async function bootstrap() {
     }),
   );
 
+ // Global filter registration
+ app.useGlobalFilters(new HttpExceptionFilter());
+ 
   // CORS
   app.enableCors();
 

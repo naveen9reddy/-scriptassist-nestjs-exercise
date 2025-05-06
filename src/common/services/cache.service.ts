@@ -1,99 +1,189 @@
-import { Injectable } from '@nestjs/common';
-
-// Inefficient in-memory cache implementation with multiple problems:
-// 1. No distributed cache support (fails in multi-instance deployments)
-// 2. No memory limits or LRU eviction policy
-// 3. No automatic key expiration cleanup (memory leak)
-// 4. No serialization/deserialization handling for complex objects
-// 5. No namespacing to prevent key collisions
+import { Injectable, Logger } from '@nestjs/common';
+import Redis from 'ioredis';
+import * as NodeCache from 'node-cache';
+import * as util from 'util';
 
 @Injectable()
 export class CacheService {
-  // Using a simple object as cache storage
-  // Problem: Unbounded memory growth with no eviction
-  private cache: Record<string, { value: any; expiresAt: number }> = {};
+  private cache: NodeCache;
+  private redisClient: Redis;
+  private readonly logger = new Logger(CacheService.name);
+  private readonly namespace: string = 'cache';
 
-  // Inefficient set operation with no validation
+  constructor() {
+    // Initialize in-memory cache 
+    this.cache = new NodeCache({ 
+      stdTTL: 300, // Time-to-live (TTL) for each cache item in seconds
+      checkperiod: 60, // Period to check and clean expired items
+      deleteOnExpire: true // Automatically delete expired items
+    });
+
+    this.redisClient = new Redis({
+      host: 'localhost',
+      port: 6379,
+    });
+  }    
+
+  // method to validate keys
+  private validateKey(key: string): boolean {
+    return typeof key === 'string' && key.trim().length > 0;
+  }
+
+  // Set a cache item
   async set(key: string, value: any, ttlSeconds = 300): Promise<void> {
-    // Problem: No key validation or sanitization
-    // Problem: Directly stores references without cloning (potential memory issues)
-    // Problem: No error handling for invalid values
-    
-    const expiresAt = Date.now() + ttlSeconds * 1000;
-    
-    // Problem: No namespacing for keys
-    this.cache[key] = {
-      value,
-      expiresAt,
-    };
-    
-    // Problem: No logging or monitoring of cache usage
+    if (!this.validateKey(key)) {
+      this.logger.error(`Invalid cache key: ${key}`);
+      throw new Error('Invalid cache key');
+    }
+
+    try {
+      const serializedValue = JSON.stringify(value); // Serialize object for storage
+      const expiresAt = Date.now() + ttlSeconds * 1000;
+
+      // In-memory cache
+      this.cache.set(key, { value: serializedValue, expiresAt });
+
+      // Redis cache
+      await this.redisClient.setex(`${this.namespace}:${key}`, ttlSeconds, serializedValue);
+
+      this.logger.log(`Cache set for key: ${key}`);
+    } catch (error) {
+      this.logger.error(`Error setting cache for key: ${key}`);
+      throw new Error('Error setting cache');
+    }
   }
 
-  // Inefficient get operation that doesn't handle errors properly
+  // Get a cache item (from Redis and fallback to in-memory cache)
   async get<T>(key: string): Promise<T | null> {
-    // Problem: No key validation
-    const item = this.cache[key];
-    
-    if (!item) {
-      return null;
+    if (!this.validateKey(key)) {
+      this.logger.error(`Invalid cache key: ${key}`);
+      throw new Error('Invalid cache key');
     }
-    
-    // Problem: Checking expiration on every get (performance issue)
-    // Rather than having a background job to clean up expired items
-    if (item.expiresAt < Date.now()) {
-      // Problem: Inefficient immediate deletion during read operations
-      delete this.cache[key];
+
+    try {
+      // First check Redis
+      const redisValue = await this.redisClient.get(`${this.namespace}:${key}`);
+      if (redisValue) {
+        this.logger.log(`Cache hit in Redis for key: ${key}`);
+        return JSON.parse(redisValue) as T; // Deserialize value
+      }
+
+      // Fallback to in-memory cache
+      const cacheItem = this.cache.get<{ value: string; expiresAt: number }>(key);
+      if (cacheItem && cacheItem.expiresAt > Date.now()) {
+        this.logger.log(`Cache hit in memory for key: ${key}`);
+        return JSON.parse(cacheItem.value) as T; // Deserialize value
+      }
+
+      // Cache miss
+      this.logger.warn(`Cache miss for key: ${key}`);
       return null;
+    } catch (error) {
+      this.logger.error(`Error getting cache for key: ${key}`);
+      throw new Error('Error getting cache');
     }
-    
-    // Problem: Returns direct object reference rather than cloning
-    // This can lead to unintended cache modifications when the returned
-    // object is modified by the caller
-    return item.value as T;
   }
 
-  // Inefficient delete operation
+  // Delete a cache item (both Redis and in-memory cache)
   async delete(key: string): Promise<boolean> {
-    // Problem: No validation or error handling
-    const exists = key in this.cache;
-    
-    // Problem: No logging of cache misses for monitoring
-    if (exists) {
-      delete this.cache[key];
-      return true;
+    if (!this.validateKey(key)) {
+      this.logger.error(`Invalid cache key: ${key}`);
+      throw new Error('Invalid cache key');
     }
-    
-    return false;
+
+    try {
+      // In-memory cache
+      const inMemoryDeleted = this.cache.del(key);
+
+      // Redis cache
+      const redisDeleted = await this.redisClient.del(`${this.namespace}:${key}`);
+
+     
+      if (inMemoryDeleted || redisDeleted) {
+        this.logger.log(`Cache deleted for key: ${key}`);
+        return true;
+      }
+
+      this.logger.warn(`Cache not found for deletion: ${key}`);
+      return false;
+    } catch (error) {
+      this.logger.error(`Error deleting cache for key: ${key}`, );
+      throw new Error('Error deleting cache');
+    }
   }
 
-  // Inefficient cache clearing
+  // Clear the entire cache 
   async clear(): Promise<void> {
-    // Problem: Blocking operation that can cause performance issues
-    // on large caches
-    this.cache = {};
-    
-    // Problem: No notification or events when cache is cleared
+    try {
+      // In-memory cache clear
+      this.cache.flushAll();
+
+      // Redis cache clear
+      await this.redisClient.flushdb();
+
+      this.logger.log('Cache cleared');
+    } catch (error) {
+      this.logger.error('Error clearing cache');
+      throw new Error('Error clearing cache');
+    }
   }
 
-  // Inefficient method to check if a key exists
-  // Problem: Duplicates logic from the get method
+  // Check if a cache item exists 
   async has(key: string): Promise<boolean> {
-    const item = this.cache[key];
-    
-    if (!item) {
-      return false;
+    if (!this.validateKey(key)) {
+      this.logger.error(`Invalid cache key: ${key}`);
+      throw new Error('Invalid cache key');
     }
-    
-    // Problem: Repeating expiration logic instead of having a shared helper
-    if (item.expiresAt < Date.now()) {
-      delete this.cache[key];
+
+    try {
+      // Check Redis
+      const redisExists = await this.redisClient.exists(`${this.namespace}:${key}`);
+      if (redisExists) {
+        this.logger.log(`Cache exists in Redis for key: ${key}`);
+        return true;
+      }
+
+      // Check in-memory cache
+      const cacheItem = this.cache.get<{ value: string; expiresAt: number }>(key);
+      if (cacheItem && cacheItem.expiresAt > Date.now()) {
+        this.logger.log(`Cache exists in memory for key: ${key}`);
+        return true;
+      }
+
+      this.logger.warn(`Cache not found for key: ${key}`);
       return false;
+    } catch (error) {
+      this.logger.error(`Error checking cache existence for key: ${key}`);
+      throw new Error('Error checking cache existence');
     }
-    
-    return true;
+  }
+
+  // Background cleanup task for expired cache entries
+  private async cleanupExpired(): Promise<void> {
+    try {
+      const keys = this.cache.keys();
+      for (const key of keys) {
+        this.cache.get(key); // Triggers TTL check and removes if expired
+      }
+    } catch (err) {
+      this.logger.error('Cache cleanup error:', err);
+    }
   }
   
-  // Problem: Missing methods for bulk operations and cache statistics
-  // Problem: No monitoring or instrumentation
-} 
+
+  // Get cache statistics
+  async stats(): Promise<any> {
+    try {
+      const inMemoryStats = this.cache.getStats();
+      const redisInfo = await this.redisClient.info('memory');
+
+      return {
+        inMemoryStats,
+        redisInfo,
+      };
+    } catch (error) {
+      this.logger.error('Error fetching cache stats');
+      throw new Error('Error fetching cache stats');
+    }
+  }
+}

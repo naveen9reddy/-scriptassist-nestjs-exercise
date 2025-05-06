@@ -22,19 +22,23 @@ import { RateLimitGuard } from '../../common/guards/rate-limit.guard';
 import { RateLimit } from '../../common/decorators/rate-limit.decorator';
 import { AuthGuard } from '@nestjs/passport';
 import { BatchTaskDto } from './dto/batch-task.dto';
-import { PaginatedResponse, PaginationOptions } from 'src/types/pagination.interface';
+import * as Types from 'src/types/pagination.interface';
 import { HttpResponse } from 'src/types/http-response.interface';
 import { Task } from './entities/task.entity';
+import { RolesGuard } from '@common/guards/roles.guard';
+import { Role } from './enums/roles.enum';
+import { Roles } from '@common/decorators/roles.decorator';
 
 @ApiTags('tasks')
 @Controller('tasks')
-@UseGuards(AuthGuard('jwt'), RateLimitGuard)
-@RateLimit({ limit: 100, windowMs: 60000 })
+@UseGuards(AuthGuard('jwt'), RateLimitGuard,RolesGuard)
 @ApiBearerAuth()
 export class TasksController {
   constructor(private readonly tasksService: TasksService) {}
 
   @Post()
+  @RateLimit({limit:5, windowMs:60000})
+  @Roles(Role.ADMIN)
   @ApiOperation({ summary: 'Create a new task' })
   async create(@Body() createTaskDto: CreateTaskDto): Promise<HttpResponse<Task>> {
     try {
@@ -52,6 +56,7 @@ export class TasksController {
   }
 
   @Get()
+  @RateLimit({ limit: 3, windowMs: 60000 })
   @ApiOperation({ summary: 'Find all tasks with optional filtering and pagination' })
   @ApiQuery({ name: 'status', required: false, enum: TaskStatus })
   @ApiQuery({ name: 'priority', required: false, enum: TaskPriority })
@@ -60,8 +65,8 @@ export class TasksController {
   @ApiQuery({ name: 'sortBy', required: false, type: String })
   @ApiQuery({ name: 'sortOrder', required: false, enum: ['ASC', 'DESC'] })
   async findAll(
-    @Query() query: PaginationOptions & { status?: TaskStatus; priority?: TaskPriority }
-  ): Promise<HttpResponse<PaginatedResponse<Task>>> {
+    @Query() query: Types.PaginationOptions & { status?: TaskStatus; priority?: TaskPriority }
+  ): Promise<HttpResponse<Types.PaginatedResponse<Task>>> {
     try {
       return await this.tasksService.findAll(query); 
     } catch (error) {
@@ -74,7 +79,9 @@ export class TasksController {
       );
     }
   }
-
+  
+  
+  @RateLimit({ limit: 10, windowMs: 60000 }) 
   @Get('stats')
   @ApiOperation({ summary: 'Get task statistics' })
   async getStats(): Promise<HttpResponse<any>> {
@@ -92,6 +99,7 @@ export class TasksController {
   }
 
   @Get(':id')
+  @RateLimit({limit:3, windowMs:60000})
   @ApiOperation({ summary: 'Find a task by ID' })
   async findOne(@Param('id', ParseUUIDPipe) id: string): Promise<HttpResponse<Task>> {
     try {
@@ -108,6 +116,7 @@ export class TasksController {
   }
 
   @Patch(':id')
+  @RateLimit({limit:5, windowMs:60000})
   @ApiOperation({ summary: 'Update a task' })
   async update(
     @Param('id', ParseUUIDPipe) id: string,
@@ -134,6 +143,8 @@ export class TasksController {
   }
 
   @Delete(':id')
+  @Roles(Role.ADMIN)
+  @RateLimit({limit:5, windowMs:60000})
   @ApiOperation({ summary: 'Delete a task by ID' })
   async remove(@Param('id', ParseUUIDPipe) id: string): Promise<HttpResponse<void>> {
     try {
@@ -150,6 +161,7 @@ export class TasksController {
   }
 
   @Post('batch')
+  @RateLimit({limit:3, windowMs:60000})
   @ApiOperation({ summary: 'Batch process multiple tasks' })
   async batchProcess(@Body() batchTaskDto: BatchTaskDto): Promise<HttpResponse<any>> {
     try {
